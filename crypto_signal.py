@@ -1,4 +1,7 @@
+import sys
 import asyncio
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from collections import defaultdict
 from binance.client import Client
 from binance.enums import *
@@ -14,6 +17,7 @@ from urllib3.exceptions import InsecureRequestWarning
 import urllib3
 from decimal import Decimal, ROUND_DOWN, getcontext
 import json
+import aiohttp
 
 # SSL uyarılarını kapat
 urllib3.disable_warnings(InsecureRequestWarning)
@@ -106,13 +110,13 @@ Kaldıraç Önerisi: {leverage}x
 """
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
-def get_historical_data(symbol, interval, lookback):
-    """Binance'den geçmiş verileri çek"""
-    klines = client.get_klines(
-        symbol=symbol,
-        interval=interval,
-        limit=lookback
-    )
+# YENİ: Asenkron veri çekme fonksiyonu
+async def async_get_historical_data(symbol, interval, lookback):
+    """Binance'den geçmiş verileri asenkron çek"""
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={lookback}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, ssl=False) as resp:
+            klines = await resp.json()
     df = pd.DataFrame(klines, columns=[
         'timestamp', 'open', 'high', 'low', 'close', 'volume',
         'close_time', 'quote_volume', 'trades', 'taker_buy_base',
@@ -314,11 +318,13 @@ async def get_active_high_volume_usdt_pairs(min_volume=100000000):
     uygun_pairs = []
     for symbol, volume in high_volume_pairs:
         try:
-            df_1d = get_historical_data(symbol, '1d', 40)
+            df_1d = await async_get_historical_data(symbol, '1d', 40)
             if len(df_1d) < 30:
+                print(f"{symbol}: 1d veri yetersiz ({len(df_1d)})")
                 continue  # yeni coin, atla
             uygun_pairs.append(symbol)
-        except Exception:
+        except Exception as e:
+            print(f"{symbol}: 1d veri çekilemedi: {e}")
             continue
     return uygun_pairs
 
@@ -364,7 +370,7 @@ async def main():
             # 1. Pozisyonları kontrol et (hedef/stop)
             for symbol, pos in list(positions.items()):
                 try:
-                    df = get_historical_data(symbol, '30m', 2)  # En güncel fiyatı çek
+                    df = await async_get_historical_data(symbol, '30m', 2)  # En güncel fiyatı çek
                     last_price = float(df['close'].iloc[-1])
                     
                     # Aktif sinyal bilgilerini güncelle
@@ -494,64 +500,55 @@ async def main():
                     continue
             
             # 2. Sinyal arama
-            for symbol in symbols:
+            async def process_symbol(symbol):
                 # Eğer pozisyon açıksa, yeni sinyal arama
                 if symbol in positions:
-                    continue
-                
+                    return
                 # Stop sonrası 4 saatlik cooldown kontrolü
                 if symbol in stop_cooldown:
                     last_stop = stop_cooldown[symbol]
                     if (datetime.now() - last_stop) < timedelta(hours=2):
-                        continue  # 2 saat dolmadıysa sinyal arama
+                        return  # 2 saat dolmadıysa sinyal arama
                     else:
                         del stop_cooldown[symbol]  # 2 saat dolduysa tekrar sinyal aranabilir
-                
                 # 1 günlük veri kontrolü
                 try:
-                    df_1d = get_historical_data(symbol, timeframes['1d'], 40)
+                    df_1d = await async_get_historical_data(symbol, timeframes['1d'], 40)
                     if len(df_1d) < 30:
                         print(f"UYARI: {symbol} için 1 günlük veri 30'dan az, sinyal aranmıyor.")
-                        continue
+                        return
                 except Exception as e:
                     print(f"UYARI: {symbol} için 1 günlük veri çekilemedi: {str(e)}")
-                    continue
-                
+                    return
                 # Mevcut sinyalleri al
                 current_signals = dict()
                 for tf_name in tf_names:
                     try:
-                        df = get_historical_data(symbol, timeframes[tf_name], 200)
+                        df = await async_get_historical_data(symbol, timeframes[tf_name], 200)
                         df = calculate_full_pine_signals(df, tf_name)
                         current_signals[tf_name] = int(df['signal'].iloc[-1])
                     except Exception as e:
                         print(f"Hata: {symbol} - {tf_name} - {str(e)}")
                         current_signals[tf_name] = 0
-                
                 # İlk çalıştırmada sadece sinyalleri kaydet
                 if first_run:
                     previous_signals[symbol] = current_signals.copy()
                     print(f"İlk çalıştırma - {symbol} sinyalleri kaydedildi: {current_signals}")
-                    continue
-                
+                    return
                 # İlk çalıştırma değilse, değişiklik kontrolü yap
                 if symbol in previous_signals:
                     prev_signals = previous_signals[symbol]
                     signal_changed = False
-                    
                     # Herhangi bir zaman diliminde değişiklik var mı kontrol et
                     for tf in tf_names:
                         if prev_signals[tf] != current_signals[tf]:
                             signal_changed = True
                             print(f"{symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
                             break
-                    
                     if not signal_changed:
-                        continue  # Değişiklik yoksa devam et
-                    
+                        return  # Değişiklik yoksa devam et
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
-                    
                     # Sinyal koşullarını kontrol et
                     if all(s == 1 for s in signal_values):
                         sinyal_tipi = 'ALIS'
@@ -566,8 +563,7 @@ async def main():
                     else:
                         # Sinyal koşulu sağlanmıyorsa sadece güncelle ve devam et
                         previous_signals[symbol] = current_signals.copy()
-                        continue
-                    
+                        return
                     # 4 saatlik cooldown kontrolü
                     cooldown_key = (symbol, sinyal_tipi)
                     if cooldown_key in cooldown_signals:
@@ -575,32 +571,27 @@ async def main():
                         if (datetime.now() - last_time) < timedelta(hours=2):
                             # Cooldown süresi dolmadıysa sinyalleri güncelle ve devam et
                             previous_signals[symbol] = current_signals.copy()
-                            continue  # 2 saat dolmadıysa sinyal arama
+                            return  # 2 saat dolmadıysa sinyal arama
                         else:
                             del cooldown_signals[cooldown_key]  # 2 saat dolduysa tekrar sinyal aranabilir
-                    
                     # Aynı sinyal daha önce gönderilmiş mi kontrol et
                     signal_key = (symbol, sinyal_tipi)
                     if sent_signals.get(signal_key) == signal_values:
                         # Aynı sinyal daha önce gönderilmişse sinyalleri güncelle ve devam et
                         previous_signals[symbol] = current_signals.copy()
-                        continue
-                    
+                        return
                     # Yeni sinyal gönder
                     sent_signals[signal_key] = signal_values.copy()
                     price = float(df['close'].iloc[-1])
                     message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals)
-                    
                     if message:
                         print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
                         print(f"Değişiklik: {prev_signals} -> {current_signals}")
                         await send_telegram_message(message)
-                        
                         # Kaldıraç hesaplama
                         buy_count = sum(1 for s in current_signals.values() if s == 1)
                         sell_count = sum(1 for s in current_signals.values() if s == -1)
                         leverage = 10 if (buy_count == 3 or sell_count == 3) else 5
-                        
                         # Pozisyonu kaydet (tüm sayısal değerler float!)
                         positions[symbol] = {
                             "type": dominant_signal,
@@ -612,7 +603,6 @@ async def main():
                             "leverage": leverage,
                             "entry_time": str(datetime.now())
                         }
-                        
                         # Aktif sinyal olarak kaydet
                         active_signals[symbol] = {
                             "symbol": symbol,
@@ -628,15 +618,16 @@ async def main():
                             "current_price_float": price,
                             "last_update": str(datetime.now())
                         }
-                        
                         # İstatistikleri güncelle
                         stats["total_signals"] += 1
                         stats["active_signals_count"] = len(active_signals)
-                    
                     # Sinyalleri güncelle (her durumda)
                     previous_signals[symbol] = current_signals.copy()
-                
-                await asyncio.sleep(1)
+                await asyncio.sleep(0)  # Task'ler arası context switch için
+
+            # Paralel task listesi oluştur
+            tasks = [process_symbol(symbol) for symbol in symbols]
+            await asyncio.gather(*tasks)
             
             # İlk çalıştırma tamamlandıysa
             if first_run:
@@ -649,7 +640,7 @@ async def main():
                     del active_signals[symbol]
                     continue
                 try:
-                    df = get_historical_data(symbol, '30m', 2)
+                    df = await async_get_historical_data(symbol, '30m', 2)
                     last_price = float(df['close'].iloc[-1])
                     active_signals[symbol]["current_price"] = format_price(last_price, active_signals[symbol]["entry_price_float"])
                     active_signals[symbol]["current_price_float"] = last_price
@@ -709,7 +700,7 @@ async def main():
             # STOP OLAN COINLERİ TAKİP ET
             for symbol, info in list(stopped_coins.items()):
                 try:
-                    df = get_historical_data(symbol, '30m', 2)
+                    df = await async_get_historical_data(symbol, '30m', 2)
                     last_price = float(df['close'].iloc[-1])
                     entry_price = float(info["entry_price"])
                     if info["type"] == "ALIŞ":
