@@ -777,7 +777,6 @@ async def main():
                 avg_closed_pl = closed_pl / closed_count
                 success_rate = (stats['successful_signals'] / closed_count) * 100
                 print(f"   Başarı Oranı: %{success_rate:.1f}")
-                print(f"   Ortalama Kar/Zarar (Kapanan): ${avg_closed_pl:.2f}")
             else:
                 print(f"   Başarı Oranı: %0.0")
             print("Tüm coinler kontrol edildi. 10 saniye bekleniyor...")
