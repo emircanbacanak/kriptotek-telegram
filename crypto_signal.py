@@ -107,6 +107,13 @@ Kaldıraç Önerisi: {leverage}x
 🛑 Stop Loss: {stop_loss_str}
 
 ⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️
+
+📋 DİKKAT:
+• Portföyünüzün max %5-10'unu kullanın
+• Stop loss'u mutlaka uygulayın
+• FOMO ile acele karar vermeyin
+• Hedef fiyata ulaşınca kar alın
+• Kendi araştırmanızı yapın
 """
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
