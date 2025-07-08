@@ -69,8 +69,8 @@ def format_price(price, ref_price=None):
 def create_signal_message(symbol, price, signals):
     """Sinyal mesajını oluştur (AL/SAT başlıkta)"""
     price_str = format_price(price, price)  # Fiyatın kendi basamağı kadar
-    signal_30m = "ALIŞ" if signals['30m'] == 1 else "SATIŞ"
-    signal_2h = "ALIŞ" if signals['2h'] == 1 else "SATIŞ"
+    signal_1h = "ALIŞ" if signals['1h'] == 1 else "SATIŞ"
+    signal_4h = "ALIŞ" if signals['4h'] == 1 else "SATIŞ"
     signal_1d = "ALIŞ" if signals['1d'] == 1 else "SATIŞ"
     buy_count = sum(1 for s in signals.values() if s == 1)
     sell_count = sum(1 for s in signals.values() if s == -1)
@@ -91,30 +91,7 @@ def create_signal_message(symbol, price, signals):
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
     message = f"""
-🚨 {sinyal_tipi} 
-
-Kripto Çifti: {symbol}
-Fiyat: {price_str}
-
-⏰ Zaman Dilimleri:
-30 Dakika: {signal_30m}
-2 Saat: {signal_2h}
-1 Gün: {signal_1d}
-
-Kaldıraç Önerisi: {leverage}x
-
-💰 Hedef Fiyat: {target_price_str}
-🛑 Stop Loss: {stop_loss_str}
-
-⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️
-
-📋 DİKKAT:
-• Portföyünüzün max %5-10'unu kullanın
-• Stop loss'u mutlaka uygulayın
-• FOMO ile acele karar vermeyin
-• Hedef fiyata ulaşınca kar alın
-• Kendi araştırmanızı yapın
-"""
+🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n1 Saat: {signal_1h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: {leverage}x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
 # YENİ: Asenkron veri çekme fonksiyonu
@@ -289,7 +266,7 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     return df
 
 # --- YENİ ANA DÖNGÜ VE MANTIK ---
-async def get_active_high_volume_usdt_pairs(min_volume=100000000):
+async def get_active_high_volume_usdt_pairs(min_volume=200000000):
     """
     Sadece spotta aktif, USDT bazlı ve 24s hacmi min_volume üstü tüm coinleri döndürür.
     1 günlük (1d) verisi 30'dan az olan yeni coinler otomatik olarak atlanır.
@@ -359,25 +336,25 @@ async def main():
     }
     
     timeframes = {
-        '30m': '30m',
-        '2h': '2h',
+        '1h': '1h',
+        '4h': '4h',
         '1d': '1d'
     }
-    tf_names = ['30m', '2h', '1d']
+    tf_names = ['1h', '4h', '1d']
     
     print("Sinyal botu başlatıldı!")
     print("İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")
     
     while True:
         try:
-            symbols = await get_active_high_volume_usdt_pairs(min_volume=100000000)
+            symbols = await get_active_high_volume_usdt_pairs(min_volume=200000000)
             tracked_coins.update(symbols)  # Takip edilen coinleri güncelle
             print(f"Takip edilen coin sayısı: {len(symbols)}")
             
             # 1. Pozisyonları kontrol et (hedef/stop)
             for symbol, pos in list(positions.items()):
                 try:
-                    df = await async_get_historical_data(symbol, '30m', 2)  # En güncel fiyatı çek
+                    df = await async_get_historical_data(symbol, '1h', 2)  # En güncel fiyatı çek
                     last_price = float(df['close'].iloc[-1])
                     
                     # Aktif sinyal bilgilerini güncelle
@@ -647,7 +624,7 @@ async def main():
                     del active_signals[symbol]
                     continue
                 try:
-                    df = await async_get_historical_data(symbol, '30m', 2)
+                    df = await async_get_historical_data(symbol, '1h', 2)
                     last_price = float(df['close'].iloc[-1])
                     active_signals[symbol]["current_price"] = format_price(last_price, active_signals[symbol]["entry_price_float"])
                     active_signals[symbol]["current_price_float"] = last_price
@@ -707,7 +684,7 @@ async def main():
             # STOP OLAN COINLERİ TAKİP ET
             for symbol, info in list(stopped_coins.items()):
                 try:
-                    df = await async_get_historical_data(symbol, '30m', 2)
+                    df = await async_get_historical_data(symbol, '1h', 2)
                     last_price = float(df['close'].iloc[-1])
                     entry_price = float(info["entry_price"])
                     if info["type"] == "ALIŞ":
