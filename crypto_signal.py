@@ -371,8 +371,8 @@ async def main():
                             cooldown_signals[(symbol, "ALIS")] = datetime.now()
                             
                             # Başarılı sinyal olarak kaydet
-                            profit_percent = ((last_price - pos["open_price"]) / pos["open_price"]) * 100
-                            profit_usd = 100 * (profit_percent / 100) * pos.get("leverage", 1)  # 100$ yatırım ve kaldıraç etkisi
+                            profit_percent = 2
+                            profit_usd = 100 * 0.02 * pos.get("leverage", 1)
                             successful_signals[symbol] = {
                                 "symbol": symbol,
                                 "type": pos["type"],
@@ -419,8 +419,8 @@ async def main():
                             }
                             
                             # Başarısız sinyal olarak kaydet
-                            loss_percent = ((last_price - pos["open_price"]) / pos["open_price"]) * 100
-                            loss_usd = 100 * (loss_percent / 100) * pos.get("leverage", 1)  # 100$ yatırım ve kaldıraç etkisi
+                            loss_percent = -1
+                            loss_usd = -100 * 0.01 * pos.get("leverage", 1)
                             failed_signals[symbol] = {
                                 "symbol": symbol,
                                 "type": pos["type"],
@@ -453,8 +453,8 @@ async def main():
                             cooldown_signals[(symbol, "SATIS")] = datetime.now()
                             
                             # Başarılı sinyal olarak kaydet
-                            profit_percent = ((pos["open_price"] - last_price) / pos["open_price"]) * 100
-                            profit_usd = 100 * (profit_percent / 100) * pos.get("leverage", 1)  # 100$ yatırım ve kaldıraç etkisi
+                            profit_percent = 2
+                            profit_usd = 100 * 0.02 * pos.get("leverage", 1)
                             successful_signals[symbol] = {
                                 "symbol": symbol,
                                 "type": pos["type"],
