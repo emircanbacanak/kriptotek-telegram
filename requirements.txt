@@ -6,6 +6,5 @@ python-binance==1.0.19
 pandas==2.1.4
 numpy==1.26.2
 ta==0.10.2
-asyncio
 urllib3
-certifi 
+certifi
