@@ -266,7 +266,7 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     return df
 
 # --- YENİ ANA DÖNGÜ VE MANTIK ---
-async def get_active_high_volume_usdt_pairs(min_volume=200000000):
+async def get_active_high_volume_usdt_pairs(min_volume=20000000):
     """
     Sadece spotta aktif, USDT bazlı ve 24s hacmi min_volume üstü tüm coinleri döndürür.
     1 günlük (1d) verisi 30'dan az olan yeni coinler otomatik olarak atlanır.
@@ -347,7 +347,7 @@ async def main():
     
     while True:
         try:
-            symbols = await get_active_high_volume_usdt_pairs(min_volume=200000000)
+            symbols = await get_active_high_volume_usdt_pairs(min_volume=20000000)
             tracked_coins.update(symbols)  # Takip edilen coinleri güncelle
             print(f"Takip edilen coin sayısı: {len(symbols)}")
             
