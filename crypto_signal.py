@@ -87,7 +87,8 @@ def create_signal_message(symbol, price, signals):
         sinyal_tipi = "SAT SİNYALİ"
         leverage = 10 if sell_count == 3 else 5
     else:
-        return None, None, None, None
+        return None, None, None, None, None
+    # Hedef ve stop fiyatlarını, fiyatın ondalık basamağı kadar formatla
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
     message = f"""
@@ -266,7 +267,7 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     return df
 
 # --- YENİ ANA DÖNGÜ VE MANTIK ---
-async def get_active_high_volume_usdt_pairs(min_volume=20000000):
+async def get_active_high_volume_usdt_pairs(min_volume=30000000):
     """
     Sadece spotta aktif, USDT bazlı ve 24s hacmi min_volume üstü tüm coinleri döndürür.
     1 günlük (1d) verisi 30'dan az olan yeni coinler otomatik olarak atlanır.
@@ -347,7 +348,7 @@ async def main():
     
     while True:
         try:
-            symbols = await get_active_high_volume_usdt_pairs(min_volume=20000000)
+            symbols = await get_active_high_volume_usdt_pairs(min_volume=30000000)
             tracked_coins.update(symbols)  # Takip edilen coinleri güncelle
             print(f"Takip edilen coin sayısı: {len(symbols)}")
             
