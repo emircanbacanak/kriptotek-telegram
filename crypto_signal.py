@@ -92,7 +92,7 @@ def create_signal_message(symbol, price, signals):
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
     message = f"""
-🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n1 Saat: {signal_1h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: {leverage}x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
+🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n1 Saat: {signal_1h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: 5x - 10x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
 async def async_get_historical_data(symbol, interval, lookback):
@@ -371,7 +371,7 @@ async def main():
                             
                             # Başarılı sinyal olarak kaydet
                             profit_percent = 2
-                            profit_usd = 100 * 0.02 * pos.get("leverage", 1)
+                            profit_usd = 100 * 0.02 * 10
                             successful_signals[symbol] = {
                                 "symbol": symbol,
                                 "type": pos["type"],
@@ -419,7 +419,7 @@ async def main():
                             
                             # Başarısız sinyal olarak kaydet
                             loss_percent = -1
-                            loss_usd = -100 * 0.01 * pos.get("leverage", 1)
+                            loss_usd = -100 * 0.01 * 10
                             failed_signals[symbol] = {
                                 "symbol": symbol,
                                 "type": pos["type"],
@@ -453,7 +453,7 @@ async def main():
                             
                             # Başarılı sinyal olarak kaydet
                             profit_percent = 2
-                            profit_usd = 100 * 0.02 * pos.get("leverage", 1)
+                            profit_usd = 100 * 0.02 * 10
                             successful_signals[symbol] = {
                                 "symbol": symbol,
                                 "type": pos["type"],
@@ -534,18 +534,12 @@ async def main():
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
                     # Sinyal koşullarını kontrol et
+                    # Sinyal koşulu: sadece 3 zaman dilimi de aynıysa
                     if all(s == 1 for s in signal_values):
                         sinyal_tipi = 'ALIS'
                     elif all(s == -1 for s in signal_values):
                         sinyal_tipi = 'SATIS'
-                    elif (
-                        (signal_values[0] == signal_values[1] != 0) or
-                        (signal_values[1] == signal_values[2] != 0) or
-                        (signal_values[0] == signal_values[2] != 0)
-                    ):
-                        sinyal_tipi = 'ALIS' if signal_values.count(1) >= 2 else 'SATIS'
                     else:
-                        # Sinyal koşulu sağlanmıyorsa sadece güncelle ve devam et
                         previous_signals[symbol] = current_signals.copy()
                         return
                     # 4 saatlik cooldown kontrolü
@@ -569,6 +563,7 @@ async def main():
                     price = float(df['close'].iloc[-1])
                     message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals)
                     if message:
+                        message = message.replace('Kaldıraç Önerisi: 10x', 'Kaldıraç Önerisi: 5x - 10x')
                         print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
                         print(f"Değişiklik: {prev_signals} -> {current_signals}")
                         await send_telegram_message(message)
@@ -754,8 +749,9 @@ async def main():
                 print(f"   Başarı Oranı: %{success_rate:.1f}")
             else:
                 print(f"   Başarı Oranı: %0.0")
-            print("Tüm coinler kontrol edildi. 10 saniye bekleniyor...")
-            await asyncio.sleep(10)
+            # Döngü sonunda bekleme süresi
+            print("Tüm coinler kontrol edildi. 30 saniye bekleniyor...")
+            await asyncio.sleep(30)
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
