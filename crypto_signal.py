@@ -11,8 +11,6 @@ import ta
 import time
 from datetime import datetime, timedelta
 import telegram
-import requests
-import certifi
 from urllib3.exceptions import InsecureRequestWarning
 import urllib3
 from decimal import Decimal, ROUND_DOWN, getcontext

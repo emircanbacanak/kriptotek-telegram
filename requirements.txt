@@ -5,5 +5,4 @@ ta==0.10.2
 telegram
 requests==2.31.0
 urllib3
-certifi
 aiohttp
