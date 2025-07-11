@@ -488,13 +488,14 @@ async def main():
                 # Eğer pozisyon açıksa, yeni sinyal arama
                 if symbol in positions:
                     return
-                # Stop sonrası 4 saatlik cooldown kontrolü
+                # Stop sonrası 2 saatlik cooldown kontrolü
                 if symbol in stop_cooldown:
                     last_stop = stop_cooldown[symbol]
                     if (datetime.now() - last_stop) < timedelta(hours=2):
                         return  # 2 saat dolmadıysa sinyal arama
                     else:
                         del stop_cooldown[symbol]  # 2 saat dolduysa tekrar sinyal aranabilir
+                        print(f"{symbol} için stop sonrası cooldown bitti, tekrar sinyal aranacak.")
                 # 1 günlük veri kontrolü
                 try:
                     df_1d = await async_get_historical_data(symbol, timeframes['1d'], 40)
