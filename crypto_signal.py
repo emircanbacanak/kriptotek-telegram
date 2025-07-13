@@ -64,7 +64,48 @@ def format_price(price, ref_price=None):
         else:
             return f"{price:.10f}".rstrip('0').rstrip('.')
 
-def create_signal_message(symbol, price, signals):
+def calculate_signal_strength(df, signals):
+    """Sinyal güvenilirlik skorunu hesapla (0-100)"""
+    strength = 0
+    
+    # 1. RSI gücü (0-20 puan)
+    rsi = df['rsi'].iloc[-1]
+    if signals['1h'] == 1:  # ALIŞ sinyali
+        if rsi < 30: strength += 20
+        elif rsi < 40: strength += 15
+        elif rsi < 50: strength += 10
+    else:  # SATIŞ sinyali
+        if rsi > 70: strength += 20
+        elif rsi > 60: strength += 15
+        elif rsi > 50: strength += 10
+    
+    # 2. MACD gücü (0-20 puan)
+    macd = df['macd'].iloc[-1]
+    macd_signal = df['macd_signal'].iloc[-1]
+    if signals['1h'] == 1 and macd > macd_signal:
+        strength += 20
+    elif signals['1h'] == -1 and macd < macd_signal:
+        strength += 20
+    
+    # 3. Trend gücü (0-20 puan)
+    if df['trend_bullish'].iloc[-1] and signals['1h'] == 1:
+        strength += 20
+    elif df['trend_bearish'].iloc[-1] and signals['1h'] == -1:
+        strength += 20
+    
+    # 4. Hacim gücü (0-20 puan)
+    if df['enough_volume'].iloc[-1]:
+        strength += 20
+    
+    # 5. MA gücü (0-20 puan)
+    if df['ma_bullish'].iloc[-1] and signals['1h'] == 1:
+        strength += 20
+    elif df['ma_bearish'].iloc[-1] and signals['1h'] == -1:
+        strength += 20
+    
+    return min(strength, 100)
+
+def create_signal_message(symbol, price, signals, signal_strength=0):
     """Sinyal mesajını oluştur (AL/SAT başlıkta)"""
     price_str = format_price(price, price)  # Fiyatın kendi basamağı kadar
     signal_1h = "ALIŞ" if signals['1h'] == 1 else "SATIŞ"
@@ -72,25 +113,77 @@ def create_signal_message(symbol, price, signals):
     signal_1d = "ALIŞ" if signals['1d'] == 1 else "SATIŞ"
     buy_count = sum(1 for s in signals.values() if s == 1)
     sell_count = sum(1 for s in signals.values() if s == -1)
+    
+    # Sinyal gücüne göre risk ayarlama
+    if signal_strength >= 80:
+        risk_level = "🟢 DÜŞÜK RİSK"
+        target_multiplier = 1.03  # %3 hedef
+        stop_multiplier = 0.985   # %1.5 stop
+        leverage_suggestion = "10x - 15x"
+    elif signal_strength >= 60:
+        risk_level = "🟡 ORTA RİSK"
+        target_multiplier = 1.025 # %2.5 hedef
+        stop_multiplier = 0.99    # %1 stop
+        leverage_suggestion = "5x - 10x"
+    else:
+        risk_level = "🔴 YÜKSEK RİSK"
+        target_multiplier = 1.02  # %2 hedef
+        stop_multiplier = 0.995   # %0.5 stop
+        leverage_suggestion = "3x - 5x"
+    
     if buy_count >= 2:
         dominant_signal = "ALIŞ"
-        target_price = price * 1.02  # %2 hedef
-        stop_loss = price * 0.99     # %1 stop
+        target_price = price * target_multiplier
+        stop_loss = price * stop_multiplier
         sinyal_tipi = "AL SİNYALİ"
-        leverage = 10 if buy_count == 3 else 5
     elif sell_count >= 2:
         dominant_signal = "SATIŞ"
-        target_price = price * 0.98  # %2 hedef
-        stop_loss = price * 1.01     # %1 stop
+        target_price = price * (2 - target_multiplier)  # Ters hesaplama
+        stop_loss = price * (2 - stop_multiplier)       # Ters hesaplama
         sinyal_tipi = "SAT SİNYALİ"
-        leverage = 10 if sell_count == 3 else 5
     else:
         return None, None, None, None, None
+    
     # Hedef ve stop fiyatlarını, fiyatın ondalık basamağı kadar formatla
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
+    
+    # Güvenilirlik emoji
+    if signal_strength >= 80:
+        confidence_emoji = "🔥"
+    elif signal_strength >= 60:
+        confidence_emoji = "⚡"
+    else:
+        confidence_emoji = "⚠️"
+    
     message = f"""
-🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n1 Saat: {signal_1h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: 5x - 10x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
+{confidence_emoji} {sinyal_tipi} {confidence_emoji}
+
+📊 Güvenilirlik: {signal_strength}/100
+{risk_level}
+
+Kripto Çifti: {symbol}
+Fiyat: {price_str}
+
+⏰ Zaman Dilimleri:
+1 Saat: {signal_1h}
+4 Saat: {signal_4h}
+1 Gün: {signal_1d}
+
+Kaldıraç Önerisi: {leverage_suggestion}
+
+💰 Hedef Fiyat: {target_price_str}
+🛑 Stop Loss: {stop_loss_str}
+
+⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️
+
+📋 DİKKAT:
+• Portföyünüzün max %5-10'unu kullanın
+• Stop loss'u mutlaka uygulayın
+• FOMO ile acele karar vermeyin
+• Hedef fiyata ulaşınca kar alın
+• Kendi araştırmanızı yapın
+"""
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
 async def async_get_historical_data(symbol, interval, lookback):
@@ -111,12 +204,11 @@ async def async_get_historical_data(symbol, interval, lookback):
     df['volume'] = df['volume'].astype(float)
     return df
 
-def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
+def calculate_full_pine_signals(df, timeframe):
     """
     Pine Script algo.pine mantığını eksiksiz şekilde Python'a taşır.
     df: pandas DataFrame (timestamp, open, high, low, close, volume)
     timeframe: '15m', '2h', '1d', '1w' gibi string
-    fib_filter_enabled: Fibonacci filtresi aktif mi?
     Dönüş: df (ekstra sütunlarla, en sonda 'signal')
     """
     # Zaman dilimine göre parametreler
@@ -131,7 +223,6 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     short_ma_period = 30 if is_weekly else 20 if is_daily else 12 if is_4h else 9
     long_ma_period = 150 if is_weekly else 100 if is_daily else 60 if is_4h else 50
     mfi_length = 25 if is_weekly else 20 if is_daily else 16 if is_4h else 14
-    fib_lookback = 150 if is_weekly else 100 if is_daily else 70 if is_4h else 50
 
     # EMA ve trend
     df['ema200'] = ta.trend.EMAIndicator(df['close'], window=200).ema_indicator()
@@ -185,41 +276,8 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     df['mfi_bullish'] = df['mfi'] < 65
     df['mfi_bearish'] = df['mfi'] > 35
 
-    # Fibonacci Seviyeleri
-    highest_high = df['high'].rolling(window=fib_lookback).max()
-    lowest_low = df['low'].rolling(window=fib_lookback).min()
-    fib_level1 = highest_high * 0.618
-    fib_level2 = lowest_low * 1.382
-    if fib_filter_enabled:
-        df['fib_in_range'] = (df['close'] > fib_level1) & (df['close'] < fib_level2)
-    else:
-        df['fib_in_range'] = True
-
-    # Ichimoku Bulutu (isteğe bağlı, sinyalde kullanılmıyor ama eklenebilir)
-    def ichimoku(df, conv_periods=9, base_periods=26, span_b_periods=52, displacement=26):
-        high = df['high']
-        low = df['low']
-        close = df['close']
-        conv_line = (high.rolling(window=conv_periods).max() + low.rolling(window=conv_periods).min()) / 2
-        base_line = (high.rolling(window=base_periods).max() + low.rolling(window=base_periods).min()) / 2
-        leading_span_a = ((conv_line + base_line) / 2).shift(displacement)
-        leading_span_b = ((high.rolling(window=span_b_periods).max() + low.rolling(window=span_b_periods).min()) / 2).shift(displacement)
-        lagging_span = close.shift(-displacement)
-        return conv_line, base_line, leading_span_a, leading_span_b, lagging_span
-    # conv_line, base_line, leading_span_a, leading_span_b, lagging_span = ichimoku(df)
-
-    # Pivot Noktaları (isteğe bağlı, sinyalde kullanılmıyor ama eklenebilir)
-    def pivot_points(df):
-        high = df['high'].shift(1)
-        low = df['low'].shift(1)
-        close = df['close'].shift(1)
-        pivot = (high + low + close) / 3
-        r1 = 2 * pivot - low
-        s1 = 2 * pivot - high
-        r2 = pivot + (high - low)
-        s2 = pivot - (high - low)
-        return pivot, r1, s1, r2, s2
-    # df['pivot'], df['r1'], df['s1'], df['r2'], df['s2'] = pivot_points(df)
+    # Fibonacci Filtresi (basitleştirildi)
+    df['fib_in_range'] = True
 
     # --- PineScript ile birebir AL/SAT sinyal mantığı ---
     def crossover(series1, series2):
@@ -269,6 +327,7 @@ async def get_active_high_volume_usdt_pairs(min_volume=65000000):
     Sadece spotta aktif, USDT bazlı ve 24s hacmi min_volume üstü tüm coinleri döndürür.
     1 günlük (1d) verisi 30'dan az olan yeni coinler otomatik olarak atlanır.
     USDCUSDT, FDUSDUSDT gibi 1:1 stablecoin çiftleri hariç tutulur.
+    Ek güvenlik: Son 7 günde %40+ düşüş yaşayan coinler hariç tutulur.
     """
     exchange_info = client.get_exchange_info()
     tickers = client.get_ticker()
@@ -304,6 +363,17 @@ async def get_active_high_volume_usdt_pairs(min_volume=65000000):
             if len(df_1d) < 30:
                 print(f"{symbol}: 1d veri yetersiz ({len(df_1d)})")
                 continue  # yeni coin, atla
+            
+            # Son 7 günde %40+ düşüş kontrolü
+            if len(df_1d) >= 7:
+                current_price = float(df_1d['close'].iloc[-1])
+                week_ago_price = float(df_1d['close'].iloc[-8])  # 7 gün önce
+                price_change_percent = ((current_price - week_ago_price) / week_ago_price) * 100
+                
+                if price_change_percent < -40:
+                    print(f"{symbol}: Son 7 günde %{price_change_percent:.1f} düşüş, atlanıyor")
+                    continue
+            
             uygun_pairs.append(symbol)
         except Exception as e:
             print(f"{symbol}: 1d veri çekilemedi: {e}")
@@ -533,7 +603,7 @@ async def main():
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
                     # Sinyal koşullarını kontrol et
-                    # Sinyal koşulu: sadece 3 zaman dilimi de aynıysa
+                    # Sinyal koşulu: 3 zaman dilimi de aynı olmalı VE güçlü sinyal olmalı
                     if all(s == 1 for s in signal_values):
                         sinyal_tipi = 'ALIS'
                     elif all(s == -1 for s in signal_values):
@@ -541,6 +611,22 @@ async def main():
                     else:
                         previous_signals[symbol] = current_signals.copy()
                         return
+                    
+                    # Ek güvenlik: Son 24 saatte %8+ hareket varsa sinyal verme
+                    try:
+                        df_24h = await async_get_historical_data(symbol, '1h', 24)
+                        if len(df_24h) >= 24:
+                            current_price = float(df_24h['close'].iloc[-1])
+                            day_ago_price = float(df_24h['close'].iloc[0])
+                            daily_change = abs((current_price - day_ago_price) / day_ago_price) * 100
+                            
+                            if daily_change > 8:
+                                print(f"{symbol}: Son 24 saatte %{daily_change:.1f} hareket, sinyal atlanıyor")
+                                previous_signals[symbol] = current_signals.copy()
+                                return
+                    except Exception as e:
+                        print(f"{symbol}: 24h veri kontrolü hatası: {e}")
+                        continue
                     # 4 saatlik cooldown kontrolü
                     cooldown_key = (symbol, sinyal_tipi)
                     if cooldown_key in cooldown_signals:
@@ -560,16 +646,29 @@ async def main():
                     # Yeni sinyal gönder
                     sent_signals[signal_key] = signal_values.copy()
                     price = float(df['close'].iloc[-1])
-                    message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals)
+                    
+                    # Sinyal gücünü hesapla
+                    signal_strength = calculate_signal_strength(df, current_signals)
+                    
+                    # Minimum güvenilirlik kontrolü (sadece 60+ skorlu sinyaller)
+                    if signal_strength < 60:
+                        print(f"{symbol}: Sinyal gücü düşük ({signal_strength}/100), atlanıyor")
+                        previous_signals[symbol] = current_signals.copy()
+                        continue
+                    
+                    message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, signal_strength)
                     if message:
-                        message = message.replace('Kaldıraç Önerisi: 10x', 'Kaldıraç Önerisi: 5x - 10x')
-                        print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
+                        print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal} (Güç: {signal_strength}/100)")
                         print(f"Değişiklik: {prev_signals} -> {current_signals}")
                         await send_telegram_message(message)
-                        # Kaldıraç hesaplama
-                        buy_count = sum(1 for s in current_signals.values() if s == 1)
-                        sell_count = sum(1 for s in current_signals.values() if s == -1)
-                        leverage = 10 if (buy_count == 3 or sell_count == 3) else 5
+                        
+                        # Kaldıraç hesaplama (güce göre)
+                        if signal_strength >= 80:
+                            leverage = 15
+                        elif signal_strength >= 60:
+                            leverage = 10
+                        else:
+                            leverage = 5
                         # Pozisyonu kaydet (tüm sayısal değerler float!)
                         positions[symbol] = {
                             "type": dominant_signal,
@@ -579,6 +678,7 @@ async def main():
                             "stop_str": stop_loss_str,
                             "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in current_signals.items()},
                             "leverage": leverage,
+                            "signal_strength": signal_strength,
                             "entry_time": str(datetime.now())
                         }
                         # Aktif sinyal olarak kaydet
@@ -591,6 +691,7 @@ async def main():
                             "stop_loss": format_price(stop_loss, price),
                             "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in current_signals.items()},
                             "leverage": leverage,
+                            "signal_strength": signal_strength,
                             "signal_time": str(datetime.now()),
                             "current_price": format_price(price, price),
                             "current_price_float": price,
