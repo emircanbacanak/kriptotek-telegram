@@ -21,7 +21,7 @@ TELEGRAM_TOKEN = "7872345042:AAE6Om2LGtz1QjqfZz8ge0em6Gw29llzFno"
 TELEGRAM_CHAT_ID = "847081095"
 
 # ===== AYARLAR =====
-MIN_VOLUME = 35000000
+MIN_VOLUME = 15000000
 VOLUME_MA = 20
 RSI_OVERSOLD, RSI_OVERBOUGHT = 40, 60
 MFI_BULL, MFI_BEAR = 65, 35
@@ -413,7 +413,6 @@ async def get_active_high_volume_usdt_pairs(min_volume=MIN_VOLUME):
                 price_change_percent = ((current_price - week_ago_price) / week_ago_price) * 100
                 
                 if price_change_percent < -WEEKLY_LIMIT:
-                    print(f"{symbol}: Son 7 günde %{price_change_percent:.1f} düşüş, atlanıyor")
                     continue
             
             uygun_pairs.append(symbol)
