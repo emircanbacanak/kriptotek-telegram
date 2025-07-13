@@ -739,7 +739,7 @@ async def main():
                     "count": len(tracked_coins),
                     "last_update": str(datetime.now())
                 }, f, ensure_ascii=False, indent=2)
-            
+             
             # Başarılı sinyaller dosyası
             with open('successful_signals.json', 'w', encoding='utf-8') as f:
                 json.dump({
