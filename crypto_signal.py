@@ -626,7 +626,7 @@ async def main():
                                 return
                     except Exception as e:
                         print(f"{symbol}: 24h veri kontrolü hatası: {e}")
-                        continue
+                        return
                     # 4 saatlik cooldown kontrolü
                     cooldown_key = (symbol, sinyal_tipi)
                     if cooldown_key in cooldown_signals:
@@ -654,7 +654,7 @@ async def main():
                     if signal_strength < 60:
                         print(f"{symbol}: Sinyal gücü düşük ({signal_strength}/100), atlanıyor")
                         previous_signals[symbol] = current_signals.copy()
-                        continue
+                        return
                     
                     message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, signal_strength)
                     if message:
