@@ -2,13 +2,9 @@ import sys
 import asyncio
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-from collections import defaultdict
 from binance.client import Client
-from binance.enums import *
 import pandas as pd
-import numpy as np
 import ta
-import time
 from datetime import datetime, timedelta
 import telegram
 from urllib3.exceptions import InsecureRequestWarning
@@ -23,6 +19,21 @@ urllib3.disable_warnings(InsecureRequestWarning)
 # Telegram Bot ayarları
 TELEGRAM_TOKEN = "7872345042:AAE6Om2LGtz1QjqfZz8ge0em6Gw29llzFno"
 TELEGRAM_CHAT_ID = "847081095"
+
+# ===== AYARLAR =====
+MIN_VOLUME = 35000000
+VOLUME_MA = 20
+RSI_OVERSOLD, RSI_OVERBOUGHT = 40, 60
+MFI_BULL, MFI_BEAR = 65, 35
+MIN_STRENGTH, HIGH_STRENGTH = 60, 80
+DAILY_LIMIT, WEEKLY_LIMIT = 8, 40
+MIN_DAYS = 30
+COOLDOWN = 2
+HIGH_TARGET, HIGH_STOP = 1.03, 0.985
+MED_TARGET, MED_STOP = 1.025, 0.99
+LOW_TARGET, LOW_STOP = 1.02, 0.995
+HIGH_LEV, MED_LEV, LOW_LEV = 15, 10, 5
+STABLECOINS = ['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'BUSDUSDT', 'USDPUSDT', 'USDTUSDT']
 
 # Binance client oluştur (globalde)
 client = Client()
@@ -72,11 +83,11 @@ def calculate_signal_strength(df, signals):
     rsi = df['rsi'].iloc[-1]
     if signals['1h'] == 1:  # ALIŞ sinyali
         if rsi < 30: strength += 20
-        elif rsi < 40: strength += 15
+        elif rsi < RSI_OVERSOLD: strength += 15
         elif rsi < 50: strength += 10
     else:  # SATIŞ sinyali
         if rsi > 70: strength += 20
-        elif rsi > 60: strength += 15
+        elif rsi > RSI_OVERBOUGHT: strength += 15
         elif rsi > 50: strength += 10
     
     # 2. MACD gücü (0-20 puan)
@@ -115,21 +126,21 @@ def create_signal_message(symbol, price, signals, signal_strength=0):
     sell_count = sum(1 for s in signals.values() if s == -1)
     
     # Sinyal gücüne göre risk ayarlama
-    if signal_strength >= 80:
+    if signal_strength >= HIGH_STRENGTH:
         risk_level = "🟢 DÜŞÜK RİSK"
-        target_multiplier = 1.03  # %3 hedef
-        stop_multiplier = 0.985   # %1.5 stop
-        leverage_suggestion = "10x - 15x"
-    elif signal_strength >= 60:
+        target_multiplier = HIGH_TARGET
+        stop_multiplier = HIGH_STOP
+        leverage_suggestion = f"{MED_LEV}x - {HIGH_LEV}x"
+    elif signal_strength >= MIN_STRENGTH:
         risk_level = "🟡 ORTA RİSK"
-        target_multiplier = 1.025 # %2.5 hedef
-        stop_multiplier = 0.99    # %1 stop
-        leverage_suggestion = "5x - 10x"
+        target_multiplier = MED_TARGET
+        stop_multiplier = MED_STOP
+        leverage_suggestion = f"{LOW_LEV}x - {MED_LEV}x"
     else:
         risk_level = "🔴 YÜKSEK RİSK"
-        target_multiplier = 1.02  # %2 hedef
-        stop_multiplier = 0.995   # %0.5 stop
-        leverage_suggestion = "3x - 5x"
+        target_multiplier = LOW_TARGET
+        stop_multiplier = LOW_STOP
+        leverage_suggestion = f"3x - {LOW_LEV}x"
     
     if buy_count >= 2:
         dominant_signal = "ALIŞ"
@@ -149,9 +160,9 @@ def create_signal_message(symbol, price, signals, signal_strength=0):
     stop_loss_str = format_price(stop_loss, price)
     
     # Güvenilirlik emoji
-    if signal_strength >= 80:
+    if signal_strength >= HIGH_STRENGTH:
         confidence_emoji = "🔥"
-    elif signal_strength >= 60:
+    elif signal_strength >= MIN_STRENGTH:
         confidence_emoji = "⚡"
     else:
         confidence_emoji = "⚠️"
@@ -231,28 +242,49 @@ def calculate_full_pine_signals(df, timeframe):
 
     # RSI
     df['rsi'] = ta.momentum.RSIIndicator(df['close'], window=rsi_length).rsi()
-    rsi_overbought = 60
-    rsi_oversold = 40
 
     # MACD
     macd = ta.trend.MACD(df['close'], window_slow=macd_slow, window_fast=macd_fast, window_sign=macd_signal)
     df['macd'] = macd.macd()
     df['macd_signal'] = macd.macd_signal()
 
-    # Supertrend (özel fonksiyon)
-    def supertrend(df, atr_period, multiplier):
+    # Supertrend (Pine Script ta.supertrend ile birebir aynı)
+    def supertrend(df, atr_period, atr_multiplier):
         hl2 = (df['high'] + df['low']) / 2
         atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=atr_period).average_true_range()
-        upperband = hl2 + (multiplier * atr)
-        lowerband = hl2 - (multiplier * atr)
+        
+        # Pine Script ta.supertrend mantığı
+        upperband = hl2 + (atr_multiplier * atr)
+        lowerband = hl2 - (atr_multiplier * atr)
+        
         direction = [1]
+        supertrend_value = [lowerband.iloc[0]]
+        
         for i in range(1, len(df)):
-            if df['close'].iloc[i] > upperband.iloc[i-1]:
-                direction.append(1)
-            elif df['close'].iloc[i] < lowerband.iloc[i-1]:
-                direction.append(-1)
-            else:
-                direction.append(direction[-1])
+            prev_supertrend = supertrend_value[i-1]
+            prev_direction = direction[i-1]
+            
+            if prev_direction == 1:
+                if df['close'].iloc[i] <= lowerband.iloc[i-1]:
+                    direction.append(-1)
+                    supertrend_value.append(lowerband.iloc[i-1])
+                else:
+                    direction.append(1)
+                    if lowerband.iloc[i] > prev_supertrend:
+                        supertrend_value.append(lowerband.iloc[i])
+                    else:
+                        supertrend_value.append(prev_supertrend)
+            else:  # prev_direction == -1
+                if df['close'].iloc[i] >= upperband.iloc[i-1]:
+                    direction.append(1)
+                    supertrend_value.append(upperband.iloc[i-1])
+                else:
+                    direction.append(-1)
+                    if upperband.iloc[i] < prev_supertrend:
+                        supertrend_value.append(upperband.iloc[i])
+                    else:
+                        supertrend_value.append(prev_supertrend)
+        
         return pd.Series(direction, index=df.index)
 
     atr_period = 7 if is_4h else 10
@@ -267,17 +299,27 @@ def calculate_full_pine_signals(df, timeframe):
     df['ma_bearish'] = df['short_ma'] < df['long_ma']
 
     # Hacim Analizi
-    volume_ma_period = 20
-    df['volume_ma'] = df['volume'].rolling(window=volume_ma_period).mean()
+    df['volume_ma'] = df['volume'].rolling(window=VOLUME_MA).mean()
     df['enough_volume'] = df['volume'] > df['volume_ma'] * (0.15 if is_higher_tf else 0.4)
 
-    # MFI
-    df['mfi'] = ta.volume.MFIIndicator(df['high'], df['low'], df['close'], df['volume'], window=mfi_length).money_flow_index()
-    df['mfi_bullish'] = df['mfi'] < 65
-    df['mfi_bearish'] = df['mfi'] > 35
+    # MFI (Pine Script ile birebir aynı - manuel hesaplama)
+    typical_price = (df['high'] + df['low'] + df['close']) / 3
+    money_flow = typical_price * df['volume']
+    
+    # Positive flow hesaplama
+    price_change = typical_price > typical_price.shift(1)
+    positive_flow = money_flow.where(price_change, 0).cumsum()
+    
+    # Negative flow hesaplama
+    negative_flow = money_flow.where(~price_change, 0).cumsum()
+    
+    # MFI hesaplama
+    df['mfi'] = 100 - (100 / (1 + positive_flow / negative_flow))
+    df['mfi_bullish'] = df['mfi'] < MFI_BULL
+    df['mfi_bearish'] = df['mfi'] > MFI_BEAR
 
-    # Fibonacci Filtresi (basitleştirildi)
-    df['fib_in_range'] = True
+    # Fibonacci Filtresi (Pine Script'te varsayılan kapalı)
+    df['fib_in_range'] = True  # Her zaman True, çünkü Pine Script'te false
 
     # --- PineScript ile birebir AL/SAT sinyal mantığı ---
     def crossover(series1, series2):
@@ -288,7 +330,7 @@ def calculate_full_pine_signals(df, timeframe):
     buy_signal = (
         crossover(df['macd'], df['macd_signal']) |
         (
-            (df['rsi'] < rsi_oversold) &
+            (df['rsi'] < RSI_OVERSOLD) &
             (df['supertrend_dir'] == 1) &
             (df['ma_bullish']) &
             (df['enough_volume']) &
@@ -300,7 +342,7 @@ def calculate_full_pine_signals(df, timeframe):
     sell_signal = (
         crossunder(df['macd'], df['macd_signal']) |
         (
-            (df['rsi'] > rsi_overbought) &
+            (df['rsi'] > RSI_OVERBOUGHT) &
             (df['supertrend_dir'] == -1) &
             (df['ma_bearish']) &
             (df['enough_volume']) &
@@ -322,7 +364,7 @@ def calculate_full_pine_signals(df, timeframe):
     return df
 
 # --- YENİ ANA DÖNGÜ VE MANTIK ---
-async def get_active_high_volume_usdt_pairs(min_volume=35000000):
+async def get_active_high_volume_usdt_pairs(min_volume=MIN_VOLUME):
     """
     Sadece spotta aktif, USDT bazlı ve 24s hacmi min_volume üstü tüm coinleri döndürür.
     1 günlük (1d) verisi 30'dan az olan yeni coinler otomatik olarak atlanır.
@@ -344,7 +386,7 @@ async def get_active_high_volume_usdt_pairs(min_volume=35000000):
     for ticker in tickers:
         symbol = ticker['symbol']
         # Stablecoin çiftlerini hariç tut
-        if symbol in ['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'BUSDUSDT', 'USDPUSDT', 'USDTUSDT']:
+        if symbol in STABLECOINS:
             continue
         if symbol in spot_usdt_pairs:
             try:
@@ -360,7 +402,7 @@ async def get_active_high_volume_usdt_pairs(min_volume=35000000):
     for symbol, volume in high_volume_pairs:
         try:
             df_1d = await async_get_historical_data(symbol, '1d', 40)
-            if len(df_1d) < 30:
+            if len(df_1d) < MIN_DAYS:
                 print(f"{symbol}: 1d veri yetersiz ({len(df_1d)})")
                 continue  # yeni coin, atla
             
@@ -370,7 +412,7 @@ async def get_active_high_volume_usdt_pairs(min_volume=35000000):
                 week_ago_price = float(df_1d['close'].iloc[-8])  # 7 gün önce
                 price_change_percent = ((current_price - week_ago_price) / week_ago_price) * 100
                 
-                if price_change_percent < -40:
+                if price_change_percent < -WEEKLY_LIMIT:
                     print(f"{symbol}: Son 7 günde %{price_change_percent:.1f} düşüş, atlanıyor")
                     continue
             
@@ -415,7 +457,7 @@ async def main():
     
     while True:
         try:
-            symbols = await get_active_high_volume_usdt_pairs(min_volume=35000000)
+            symbols = await get_active_high_volume_usdt_pairs(min_volume=MIN_VOLUME)
             tracked_coins.update(symbols)  # Takip edilen coinleri güncelle
             print(f"Takip edilen coin sayısı: {len(symbols)}")
             
@@ -559,7 +601,7 @@ async def main():
                 # Stop sonrası 2 saatlik cooldown kontrolü
                 if symbol in stop_cooldown:
                     last_stop = stop_cooldown[symbol]
-                    if (datetime.now() - last_stop) < timedelta(hours=2):
+                    if (datetime.now() - last_stop) < timedelta(hours=COOLDOWN):
                         return  # 2 saat dolmadıysa sinyal arama
                     else:
                         del stop_cooldown[symbol]  # 2 saat dolduysa tekrar sinyal aranabilir
@@ -620,7 +662,7 @@ async def main():
                             day_ago_price = float(df_24h['close'].iloc[0])
                             daily_change = abs((current_price - day_ago_price) / day_ago_price) * 100
                             
-                            if daily_change > 8:
+                            if daily_change > DAILY_LIMIT:
                                 print(f"{symbol}: Son 24 saatte %{daily_change:.1f} hareket, sinyal atlanıyor")
                                 previous_signals[symbol] = current_signals.copy()
                                 return
@@ -631,7 +673,7 @@ async def main():
                     cooldown_key = (symbol, sinyal_tipi)
                     if cooldown_key in cooldown_signals:
                         last_time = cooldown_signals[cooldown_key]
-                        if (datetime.now() - last_time) < timedelta(hours=2):
+                        if (datetime.now() - last_time) < timedelta(hours=COOLDOWN):
                             # Cooldown süresi dolmadıysa sinyalleri güncelle ve devam et
                             previous_signals[symbol] = current_signals.copy()
                             return  # 2 saat dolmadıysa sinyal arama
@@ -651,7 +693,7 @@ async def main():
                     signal_strength = calculate_signal_strength(df, current_signals)
                     
                     # Minimum güvenilirlik kontrolü (sadece 60+ skorlu sinyaller)
-                    if signal_strength < 60:
+                    if signal_strength < MIN_STRENGTH:
                         print(f"{symbol}: Sinyal gücü düşük ({signal_strength}/100), atlanıyor")
                         previous_signals[symbol] = current_signals.copy()
                         return
@@ -663,12 +705,12 @@ async def main():
                         await send_telegram_message(message)
                         
                         # Kaldıraç hesaplama (güce göre)
-                        if signal_strength >= 80:
-                            leverage = 15
-                        elif signal_strength >= 60:
-                            leverage = 10
+                        if signal_strength >= HIGH_STRENGTH:
+                            leverage = HIGH_LEV
+                        elif signal_strength >= MIN_STRENGTH:
+                            leverage = MED_LEV
                         else:
-                            leverage = 5
+                            leverage = LOW_LEV
                         # Pozisyonu kaydet (tüm sayısal değerler float!)
                         positions[symbol] = {
                             "type": dominant_signal,
@@ -732,49 +774,7 @@ async def main():
             stats["active_signals_count"] = len(active_signals)
             stats["tracked_coins_count"] = len(tracked_coins)
             
-            # Takip edilen coinlerin listesi
-            with open('tracked_coins.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "tracked_coins": list(tracked_coins),
-                    "count": len(tracked_coins),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
-             
-            # Başarılı sinyaller dosyası
-            with open('successful_signals.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "successful_signals": successful_signals,
-                    "count": len(successful_signals),
-                    "total_profit_usd": sum(signal.get("profit_usd", 0) for signal in successful_signals.values()),
-                    "total_profit_percent": sum(signal.get("profit_percent", 0) for signal in successful_signals.values()),
-                    "average_profit_per_signal": round(sum(signal.get("profit_usd", 0) for signal in successful_signals.values()) / max(len(successful_signals), 1), 2),
-                    "average_duration_hours": round(sum(signal.get("duration_hours", 0) for signal in successful_signals.values()) / max(len(successful_signals), 1), 2),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
-            
-            # Başarısız sinyaller dosyası
-            with open('failed_signals.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "failed_signals": failed_signals,
-                    "count": len(failed_signals),
-                    "total_loss_usd": sum(signal.get("loss_usd", 0) for signal in failed_signals.values()),
-                    "total_loss_percent": sum(signal.get("loss_percent", 0) for signal in failed_signals.values()),
-                    "average_loss_per_signal": round(sum(signal.get("loss_usd", 0) for signal in failed_signals.values()) / max(len(failed_signals), 1), 2),
-                    "average_duration_hours": round(sum(signal.get("duration_hours", 0) for signal in failed_signals.values()) / max(len(failed_signals), 1), 2),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
-            
-            # Genel istatistikler dosyası
-            with open('general_stats.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "total_signals": stats["total_signals"],
-                    "successful_signals": stats["successful_signals"],
-                    "failed_signals": stats["failed_signals"],
-                    "total_profit_loss_usd": stats["total_profit_loss"],
-                    "success_rate_percent": round((stats["successful_signals"] / max(stats["total_signals"], 1)) * 100, 2),
-                    "average_profit_per_signal": round(stats["total_profit_loss"] / max(stats["total_signals"], 1), 2),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
+            # Kaydetme fonksiyonları kaldırıldı
             
             # STOP OLAN COINLERİ TAKİP ET
             for symbol, info in list(stopped_coins.items()):
@@ -797,10 +797,7 @@ async def main():
                         # Hedefe ulaşıldı mı?
                         if not info["reached_target"] and last_price >= float(info["target_price"]):
                             info["reached_target"] = True
-                        # Sadece ALIŞ için min_price ve max_drawdown_percent kaydet
-                        info_to_save = {k: v for k, v in info.items() if k in ["symbol", "type", "entry_price", "stop_time", "target_price", "stop_loss", "signals", "min_price", "max_drawdown_percent", "reached_target"]}
-                        with open(f'stopped_{symbol}.json', 'w', encoding='utf-8') as f:
-                            json.dump(info_to_save, f, ensure_ascii=False, indent=2)
+                        # Kaydetme fonksiyonu kaldırıldı
                         if info["reached_target"]:
                             del stopped_coins[symbol]
                     elif info["type"] == "SATIŞ":
@@ -818,10 +815,7 @@ async def main():
                         # Hedefe ulaşıldı mı?
                         if not info["reached_target"] and last_price <= float(info["target_price"]):
                             info["reached_target"] = True
-                        # Sadece SATIŞ için max_price ve max_drawup_percent kaydet
-                        info_to_save = {k: v for k, v in info.items() if k in ["symbol", "type", "entry_price", "stop_time", "target_price", "stop_loss", "signals", "max_price", "max_drawup_percent", "reached_target"]}
-                        with open(f'stopped_{symbol}.json', 'w', encoding='utf-8') as f:
-                            json.dump(info_to_save, f, ensure_ascii=False, indent=2)
+                        # Kaydetme fonksiyonu kaldırıldı
                         if info["reached_target"]:
                             del stopped_coins[symbol]
                 except Exception as e:
@@ -853,13 +847,7 @@ async def main():
             print("Tüm coinler kontrol edildi. 30 saniye bekleniyor...")
             await asyncio.sleep(30)
             
-            # Aktif sinyalleri dosyaya kaydet
-            with open('active_signals.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "active_signals": active_signals,
-                    "count": len(active_signals),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
+            # Kaydetme fonksiyonu kaldırıldı
             
         except Exception as e:
             print(f"Genel hata: {e}")
