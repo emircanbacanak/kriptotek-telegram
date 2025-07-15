@@ -446,10 +446,11 @@ async def main():
     
     timeframes = {
         '1h': '1h',
+        '2h': '2h',
         '4h': '4h',
         '1d': '1d'
     }
-    tf_names = ['1h', '4h', '1d']
+    tf_names = ['1h', '2h', '4h', '1d']
     
     print("Sinyal botu başlatıldı!")
     print("İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")
@@ -643,8 +644,7 @@ async def main():
                         return  # Değişiklik yoksa devam et
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
-                    # Sinyal koşullarını kontrol et
-                    # Sinyal koşulu: 3 zaman dilimi de aynı olmalı VE güçlü sinyal olmalı
+                    # Sinyal koşulu: 4 zaman dilimi de aynı olmalı VE güçlü sinyal olmalı
                     if all(s == 1 for s in signal_values):
                         sinyal_tipi = 'ALIS'
                     elif all(s == -1 for s in signal_values):
@@ -670,7 +670,7 @@ async def main():
                         return
                     # 4 saatlik cooldown kontrolü
                     cooldown_key = (symbol, sinyal_tipi)
-                    if cooldown_key in cooldown_signals:
+                    if cooldown_signals: # cooldown_signals boş olabilir, bu durumda kontrol etme
                         last_time = cooldown_signals[cooldown_key]
                         if (datetime.now() - last_time) < timedelta(hours=COOLDOWN):
                             # Cooldown süresi dolmadıysa sinyalleri güncelle ve devam et
