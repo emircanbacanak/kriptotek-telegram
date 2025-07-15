@@ -666,11 +666,13 @@ async def main():
                     # Herhangi bir zaman diliminde değişiklik var mı kontrol et
                     for tf in tf_names:
                         if prev_signals[tf] != current_signals[tf]:
-                            signal_changed = True
-                            print(f"{symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
+                            # Sadece -1 <-> 1 değişimlerinde logla, 0 (nötr) ise atla
+                            if (prev_signals[tf] in [-1, 1]) and (current_signals[tf] in [-1, 1]):
+                                signal_changed = True
+                                print(f"{symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
                             break
                     if not signal_changed:
-                        return  # Değişiklik yoksa devam et
+                        return  # Değişiklik yoksa veya nötr ise devam et
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
                     # Sinyal koşulu: 4 zaman dilimi de aynı olmalı VE güçlü sinyal olmalı
