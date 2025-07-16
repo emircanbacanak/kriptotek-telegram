@@ -12,6 +12,7 @@ import urllib3
 from decimal import Decimal, ROUND_DOWN, getcontext
 import json
 import aiohttp
+import numpy as np
 
 # SSL uyarılarını kapat
 urllib3.disable_warnings(InsecureRequestWarning)
@@ -325,9 +326,8 @@ def calculate_full_pine_signals(df, timeframe):
     df['signal'] = 0
     df.loc[buy_signal, 'signal'] = 1
     df.loc[sell_signal, 'signal'] = -1
-    # Son bar için sinyal yoksa, bir önceki barın sinyalini kopyala (nötr asla olmayacak)
-    if df['signal'].iloc[-1] == 0 and len(df) > 1:
-        df.at[df.index[-1], 'signal'] = df['signal'].iloc[-2]
+    # Tüm 0'ları önceki sinyalle doldur, başı da -1 ile başlat (asla 0 kalmaz)
+    df['signal'] = df['signal'].replace(0, np.nan).ffill().fillna(-1).astype(int)
     return df
 
 # --- YENİ ANA DÖNGÜ VE MANTIK ---
@@ -604,7 +604,7 @@ async def main():
                     # Herhangi bir zaman diliminde değişiklik var mı kontrol et
                     for tf in tf_names:
                         if prev_signals[tf] != current_signals[tf]:
-                            # Sadece -1 <-> 1 değişimlerinde logla, 0 (nötr) ise atla
+                            # Sadece -1 <-> 1 değiupdateşimlerinde logla, 0 (nötr) ise atla
                             if (prev_signals[tf] in [-1, 1]) and (current_signals[tf] in [-1, 1]):
                                 signal_changed = True
                                 print(f"{symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
