@@ -21,7 +21,7 @@ TELEGRAM_TOKEN = "7872345042:AAE6Om2LGtz1QjqfZz8ge0em6Gw29llzFno"
 TELEGRAM_CHAT_ID = "847081095"
 
 # ===== AYARLAR =====
-MIN_VOLUME = 45000000
+MIN_VOLUME = 10000000
 VOLUME_MA = 20
 RSI_OVERSOLD, RSI_OVERBOUGHT = 40, 60
 MFI_BULL, MFI_BEAR = 65, 35
@@ -119,8 +119,8 @@ def calculate_signal_strength(df, signals):
 def create_signal_message(symbol, price, signals, signal_strength=0):
     """Sinyal mesajını oluştur (AL/SAT başlıkta)"""
     price_str = format_price(price, price)  # Fiyatın kendi basamağı kadar
+    signal_30m = "ALIŞ" if signals['30m'] == 1 else "SATIŞ"
     signal_1h = "ALIŞ" if signals['1h'] == 1 else "SATIŞ"
-    signal_2h = "ALIŞ" if signals['2h'] == 1 else "SATIŞ"
     signal_4h = "ALIŞ" if signals['4h'] == 1 else "SATIŞ"
     signal_1d = "ALIŞ" if signals['1d'] == 1 else "SATIŞ"
     buy_count = sum(1 for s in signals.values() if s == 1)
@@ -178,8 +178,8 @@ Kripto Çifti: {symbol}
 Fiyat: {price_str}
 
 ⏰ Zaman Dilimleri:
+30 Dakika: {signal_30m}
 1 Saat: {signal_1h}
-2 Saat: {signal_2h}
 4 Saat: {signal_4h}
 1 Gün: {signal_1d}
 
@@ -474,12 +474,12 @@ async def main():
     }
     
     timeframes = {
+        '30m': '30m',
         '1h': '1h',
-        '2h': '2h',
         '4h': '4h',
         '1d': '1d'
     }
-    tf_names = ['1h', '2h', '4h', '1d']
+    tf_names = ['30m', '1h', '4h', '1d']
     
     print("Sinyal botu başlatıldı!")
     print("İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")
