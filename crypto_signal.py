@@ -337,10 +337,11 @@ async def main():
     
     timeframes = {
         '1h': '1h',
+        '2h': '2h',
         '4h': '4h',
         '1d': '1d'
     }
-    tf_names = ['1h', '4h', '1d']
+    tf_names = ['1h', '2h', '4h', '1d']
     
     print("Sinyal botu başlatıldı!")
     print("İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")
@@ -533,8 +534,7 @@ async def main():
                         return  # Değişiklik yoksa devam et
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
-                    # Sinyal koşullarını kontrol et
-                    # Sinyal koşulu: sadece 3 zaman dilimi de aynıysa
+                    # Sinyal koşulu: sadece 4 zaman dilimi de aynıysa
                     if all(s == 1 for s in signal_values):
                         sinyal_tipi = 'ALIS'
                     elif all(s == -1 for s in signal_values):
