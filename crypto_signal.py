@@ -546,32 +546,11 @@ async def main():
                         return  # Değişiklik yoksa devam et
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
-                    # Sinyal koşullarını kontrol et
                     # Sinyal koşulu: sadece 4 zaman dilimi de aynıysa
                     if all(s == 1 for s in signal_values):
                         sinyal_tipi = 'ALIS'
-                        # Son mumun yeşil olmasını kontrol et (close > open)
-                        try:
-                            df_last = await async_get_historical_data(symbol, timeframes['1h'], 2)
-                            if df_last['close'].iloc[-1] <= df_last['open'].iloc[-1]:
-                                previous_signals[symbol] = current_signals.copy()
-                                return  # Mum yeşil değilse ALIŞ sinyali üretme
-                        except Exception as e:
-                            print(f"Mum rengi kontrol hatası (ALIŞ): {symbol} - {str(e)}")
-                            previous_signals[symbol] = current_signals.copy()
-                            return
                     elif all(s == -1 for s in signal_values):
                         sinyal_tipi = 'SATIS'
-                        # Son mumun kırmızı olmasını kontrol et (close < open)
-                        try:
-                            df_last = await async_get_historical_data(symbol, timeframes['1h'], 2)
-                            if df_last['close'].iloc[-1] >= df_last['open'].iloc[-1]:
-                                previous_signals[symbol] = current_signals.copy()
-                                return  # Mum kırmızı değilse SATIŞ sinyali üretme
-                        except Exception as e:
-                            print(f"Mum rengi kontrol hatası (SATIŞ): {symbol} - {str(e)}")
-                            previous_signals[symbol] = current_signals.copy()
-                            return
                     else:
                         previous_signals[symbol] = current_signals.copy()
                         return
