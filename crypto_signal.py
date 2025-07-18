@@ -69,30 +69,32 @@ def format_price(price, ref_price=None):
 def create_signal_message(symbol, price, signals):
     """Sinyal mesajını oluştur (AL/SAT başlıkta)"""
     price_str = format_price(price, price)  # Fiyatın kendi basamağı kadar
-    signal_1h = "ALIŞ" if signals['1h'] == 1 else "SATIŞ"
-    signal_4h = "ALIŞ" if signals['4h'] == 1 else "SATIŞ"
-    signal_1d = "ALIŞ" if signals['1d'] == 1 else "SATIŞ"
+    # 1h, 2h, 4h, 1d sinyallerini yaz
+    signal_1h = "ALIŞ" if signals.get('1h', 0) == 1 else "SATIŞ"
+    signal_2h = "ALIŞ" if signals.get('2h', 0) == 1 else "SATIŞ"
+    signal_4h = "ALIŞ" if signals.get('4h', 0) == 1 else "SATIŞ"
+    signal_1d = "ALIŞ" if signals.get('1d', 0) == 1 else "SATIŞ"
     buy_count = sum(1 for s in signals.values() if s == 1)
     sell_count = sum(1 for s in signals.values() if s == -1)
-    if buy_count >= 2:
+    if buy_count >= 3:
         dominant_signal = "ALIŞ"
         target_price = price * 1.02  # %2 hedef
         stop_loss = price * 0.99     # %1 stop
         sinyal_tipi = "AL SİNYALİ"
-        leverage = 10 if buy_count == 3 else 5
-    elif sell_count >= 2:
+        leverage = 10 if buy_count == 4 else 5
+    elif sell_count >= 3:
         dominant_signal = "SATIŞ"
         target_price = price * 0.98  # %2 hedef
         stop_loss = price * 1.01     # %1 stop
         sinyal_tipi = "SAT SİNYALİ"
-        leverage = 10 if sell_count == 3 else 5
+        leverage = 10 if sell_count == 4 else 5
     else:
         return None, None, None, None, None
     # Hedef ve stop fiyatlarını, fiyatın ondalık basamağı kadar formatla
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
     message = f"""
-🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n1 Saat: {signal_1h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: 5x - 10x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
+🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n1 Saat: {signal_1h}\n2 Saat: {signal_2h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: 5x - 10x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
 async def async_get_historical_data(symbol, interval, lookback):
@@ -266,7 +268,7 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     return df
 
 # --- YENİ ANA DÖNGÜ VE MANTIK ---
-async def get_active_high_volume_usdt_pairs(min_volume=30000000):
+async def get_active_high_volume_usdt_pairs(min_volume=65000000):
     """
     Sadece spotta aktif, USDT bazlı ve 24s hacmi min_volume üstü tüm coinleri döndürür.
     1 günlük (1d) verisi 30'dan az olan yeni coinler otomatik olarak atlanır.
@@ -296,8 +298,9 @@ async def get_active_high_volume_usdt_pairs(min_volume=30000000):
                     high_volume_pairs.append((symbol, quote_volume))
             except Exception:
                 continue
-    # Hacme göre sırala
+    # Hacme göre sırala ve ilk 20'yi al
     high_volume_pairs.sort(key=lambda x: x[1], reverse=True)
+    high_volume_pairs = high_volume_pairs[:20]
     # 1d verisi 30'dan az olanları atla, uygun tüm coinleri döndür
     uygun_pairs = []
     for symbol, volume in high_volume_pairs:
@@ -492,10 +495,19 @@ async def main():
                 # Stop sonrası 4 saatlik cooldown kontrolü
                 if symbol in stop_cooldown:
                     last_stop = stop_cooldown[symbol]
-                    if (datetime.now() - last_stop) < timedelta(hours=2):
-                        return  # 2 saat dolmadıysa sinyal arama
+                    if (datetime.now() - last_stop) < timedelta(hours=4):
+                        return  # 4 saat dolmadıysa sinyal arama
                     else:
-                        del stop_cooldown[symbol]  # 2 saat dolduysa tekrar sinyal aranabilir
+                        del stop_cooldown[symbol]  # 4 saat dolduysa tekrar sinyal aranabilir
+                # Başarılı veya stop olmuş coinler için 4 saat cooldown
+                if symbol in successful_signals:
+                    last_success = successful_signals[symbol]["completion_time"]
+                    if (datetime.now() - datetime.fromisoformat(last_success)) < timedelta(hours=4):
+                        return
+                if symbol in failed_signals:
+                    last_fail = failed_signals[symbol]["completion_time"]
+                    if (datetime.now() - datetime.fromisoformat(last_fail)) < timedelta(hours=4):
+                        return
                 # 1 günlük veri kontrolü
                 try:
                     df_1d = await async_get_historical_data(symbol, timeframes['1d'], 40)
@@ -534,11 +546,32 @@ async def main():
                         return  # Değişiklik yoksa devam et
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
+                    # Sinyal koşullarını kontrol et
                     # Sinyal koşulu: sadece 4 zaman dilimi de aynıysa
                     if all(s == 1 for s in signal_values):
                         sinyal_tipi = 'ALIS'
+                        # Son mumun yeşil olmasını kontrol et (close > open)
+                        try:
+                            df_last = await async_get_historical_data(symbol, timeframes['1h'], 2)
+                            if df_last['close'].iloc[-1] <= df_last['open'].iloc[-1]:
+                                previous_signals[symbol] = current_signals.copy()
+                                return  # Mum yeşil değilse ALIŞ sinyali üretme
+                        except Exception as e:
+                            print(f"Mum rengi kontrol hatası (ALIŞ): {symbol} - {str(e)}")
+                            previous_signals[symbol] = current_signals.copy()
+                            return
                     elif all(s == -1 for s in signal_values):
                         sinyal_tipi = 'SATIS'
+                        # Son mumun kırmızı olmasını kontrol et (close < open)
+                        try:
+                            df_last = await async_get_historical_data(symbol, timeframes['1h'], 2)
+                            if df_last['close'].iloc[-1] >= df_last['open'].iloc[-1]:
+                                previous_signals[symbol] = current_signals.copy()
+                                return  # Mum kırmızı değilse SATIŞ sinyali üretme
+                        except Exception as e:
+                            print(f"Mum rengi kontrol hatası (SATIŞ): {symbol} - {str(e)}")
+                            previous_signals[symbol] = current_signals.copy()
+                            return
                     else:
                         previous_signals[symbol] = current_signals.copy()
                         return
