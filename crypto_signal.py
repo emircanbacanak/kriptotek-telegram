@@ -326,6 +326,7 @@ async def main():
     failed_signals = dict()  # {symbol: {...}} - Başarısız sinyaller (stop olan)
     tracked_coins = set()  # Takip edilen tüm coinlerin listesi
     first_run = True  # İlk çalıştırma kontrolü
+    pending_signals = dict()  # {(symbol, sinyal_tipi): {"signal_values": ..., "time": ..., "dominant_signal": ..., "message": ..., "price": ...}}
     
     # Genel istatistikler
     stats = {
@@ -570,55 +571,111 @@ async def main():
                         # Aynı sinyal daha önce gönderilmişse sinyalleri güncelle ve devam et
                         previous_signals[symbol] = current_signals.copy()
                         return
-                    # Yeni sinyal gönder
-                    sent_signals[signal_key] = signal_values.copy()
+                    # --- SİNYALİ BEKLEMEYE AL ---
                     price = float(df['close'].iloc[-1])
                     message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals)
                     if message:
-                        message = message.replace('Kaldıraç Önerisi: 10x', 'Kaldıraç Önerisi: 5x - 10x')
-                        print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
-                        print(f"Değişiklik: {prev_signals} -> {current_signals}")
-                        await send_telegram_message(message)
-                        # Kaldıraç hesaplama
-                        buy_count = sum(1 for s in current_signals.values() if s == 1)
-                        sell_count = sum(1 for s in current_signals.values() if s == -1)
-                        leverage = 10 if (buy_count == 3 or sell_count == 3) else 5
-                        # Pozisyonu kaydet (tüm sayısal değerler float!)
+                        pending_signals[signal_key] = {
+                            "signal_values": signal_values.copy(),
+                            "dominant_signal": dominant_signal,
+                            "message": message,
+                            "price": price,
+                            "signals": current_signals.copy(),
+                            "target_price": target_price,
+                            "stop_loss": stop_loss,
+                            "stop_loss_str": stop_loss_str,
+                            "created_at": datetime.now().isoformat()
+                        }
+                        print(f"Beklemeye alındı: {symbol} - {dominant_signal} (1h mum kapanışı beklenecek)")
+                    # Sinyalleri güncelle (her durumda)
+                    previous_signals[symbol] = current_signals.copy()
+                await asyncio.sleep(0)  # Task'ler arası context switch için
+            
+            # Paralel task listesi oluştur
+            tasks = [process_symbol(symbol) for symbol in symbols]
+            await asyncio.gather(*tasks)
+            
+            # --- BEKLEYEN SİNYALLERİN 1H MUM KAPANIŞI KONTROLÜ ---
+            to_remove = []
+            for (symbol, sinyal_tipi), info in pending_signals.items():
+                try:
+                    df_1h = await async_get_historical_data(symbol, '1h', 2)
+                    # Son kapanan mumun open/close değerleri
+                    open_ = float(df_1h['open'].iloc[-2])
+                    close_ = float(df_1h['close'].iloc[-2])
+                    # Alış sinyali için yeşil mum (close > open), satış için kırmızı mum (close < open)
+                    if info["dominant_signal"] == "ALIŞ" and close_ > open_:
+                        # Sinyal doğru, Telegram'a gönder
+                        await send_telegram_message(info["message"])
+                        sent_signals[(symbol, sinyal_tipi)] = info["signal_values"]
+                        # Pozisyonu kaydet
                         positions[symbol] = {
-                            "type": dominant_signal,
-                            "target": float(target_price),
-                            "stop": float(stop_loss),
-                            "open_price": float(price),
-                            "stop_str": stop_loss_str,
-                            "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in current_signals.items()},
-                            "leverage": leverage,
+                            "type": info["dominant_signal"],
+                            "target": float(info["target_price"]),
+                            "stop": float(info["stop_loss"]),
+                            "open_price": float(info["price"]),
+                            "stop_str": info["stop_loss_str"],
+                            "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in info["signals"].items()},
+                            "leverage": 10 if all(s == 1 for s in info["signal_values"]) else 5,
                             "entry_time": str(datetime.now())
                         }
                         # Aktif sinyal olarak kaydet
                         active_signals[symbol] = {
                             "symbol": symbol,
-                            "type": dominant_signal,
-                            "entry_price": format_price(price, price),
-                            "entry_price_float": price,
-                            "target_price": format_price(target_price, price),
-                            "stop_loss": format_price(stop_loss, price),
-                            "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in current_signals.items()},
-                            "leverage": leverage,
+                            "type": info["dominant_signal"],
+                            "entry_price": format_price(info["price"], info["price"]),
+                            "entry_price_float": info["price"],
+                            "target_price": format_price(info["target_price"], info["price"]),
+                            "stop_loss": format_price(info["stop_loss"], info["price"]),
+                            "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in info["signals"].items()},
+                            "leverage": 10 if all(s == 1 for s in info["signal_values"]) else 5,
                             "signal_time": str(datetime.now()),
-                            "current_price": format_price(price, price),
-                            "current_price_float": price,
+                            "current_price": format_price(info["price"], info["price"]),
+                            "current_price_float": info["price"],
                             "last_update": str(datetime.now())
                         }
-                        # İstatistikleri güncelle
-                        stats["total_signals"] += 1
-                        stats["active_signals_count"] = len(active_signals)
-                    # Sinyalleri güncelle (her durumda)
-                    previous_signals[symbol] = current_signals.copy()
-                await asyncio.sleep(0)  # Task'ler arası context switch için
-
-            # Paralel task listesi oluştur
-            tasks = [process_symbol(symbol) for symbol in symbols]
-            await asyncio.gather(*tasks)
+                        print(f"Sinyal gönderildi: {symbol} - ALIŞ (1h mum yeşil kapandı)")
+                        to_remove.append((symbol, sinyal_tipi))
+                    elif info["dominant_signal"] == "SATIŞ" and close_ < open_:
+                        # Sinyal doğru, Telegram'a gönder
+                        await send_telegram_message(info["message"])
+                        sent_signals[(symbol, sinyal_tipi)] = info["signal_values"]
+                        positions[symbol] = {
+                            "type": info["dominant_signal"],
+                            "target": float(info["target_price"]),
+                            "stop": float(info["stop_loss"]),
+                            "open_price": float(info["price"]),
+                            "stop_str": info["stop_loss_str"],
+                            "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in info["signals"].items()},
+                            "leverage": 10 if all(s == -1 for s in info["signal_values"]) else 5,
+                            "entry_time": str(datetime.now())
+                        }
+                        active_signals[symbol] = {
+                            "symbol": symbol,
+                            "type": info["dominant_signal"],
+                            "entry_price": format_price(info["price"], info["price"]),
+                            "entry_price_float": info["price"],
+                            "target_price": format_price(info["target_price"], info["price"]),
+                            "stop_loss": format_price(info["stop_loss"], info["price"]),
+                            "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in info["signals"].items()},
+                            "leverage": 10 if all(s == -1 for s in info["signal_values"]) else 5,
+                            "signal_time": str(datetime.now()),
+                            "current_price": format_price(info["price"], info["price"]),
+                            "current_price_float": info["price"],
+                            "last_update": str(datetime.now())
+                        }
+                        print(f"Sinyal gönderildi: {symbol} - SATIŞ (1h mum kırmızı kapandı)")
+                        to_remove.append((symbol, sinyal_tipi))
+                    else:
+                        # Mum rengi sinyale uymuyorsa sinyal iptal
+                        print(f"Sinyal iptal: {symbol} - {info['dominant_signal']} (1h mum rengi uymadı)")
+                        to_remove.append((symbol, sinyal_tipi))
+                except Exception as e:
+                    print(f"Bekleyen sinyal kontrol hatası: {symbol} - {str(e)}")
+                    continue
+            for key in to_remove:
+                if key in pending_signals:
+                    del pending_signals[key]
             
             # İlk çalıştırma tamamlandıysa
             if first_run:
