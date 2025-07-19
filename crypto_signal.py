@@ -69,7 +69,6 @@ def format_price(price, ref_price=None):
 def create_signal_message(symbol, price, signals):
     """Sinyal mesajını oluştur (AL/SAT başlıkta)"""
     price_str = format_price(price, price)  # Fiyatın kendi basamağı kadar
-    # 1h, 2h, 4h, 1d sinyallerini yaz
     signal_1h = "ALIŞ" if signals.get('1h', 0) == 1 else "SATIŞ"
     signal_2h = "ALIŞ" if signals.get('2h', 0) == 1 else "SATIŞ"
     signal_4h = "ALIŞ" if signals.get('4h', 0) == 1 else "SATIŞ"
@@ -268,11 +267,9 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     return df
 
 # --- YENİ ANA DÖNGÜ VE MANTIK ---
-async def get_active_high_volume_usdt_pairs(min_volume=65000000):
+async def get_active_high_volume_usdt_pairs(min_volume=30000000, top_n=40):
     """
-    Sadece spotta aktif, USDT bazlı ve 24s hacmi min_volume üstü tüm coinleri döndürür.
-    1 günlük (1d) verisi 30'dan az olan yeni coinler otomatik olarak atlanır.
-    USDCUSDT, FDUSDUSDT gibi 1:1 stablecoin çiftleri hariç tutulur.
+    Sadece spotta aktif, USDT bazlı ve 24s hacmi min_volume üstü coinlerden, günlük verisi 30'dan az olanları atlayıp, ilk top_n kadar uygun coin döndürür.
     """
     exchange_info = client.get_exchange_info()
     tickers = client.get_ticker()
@@ -298,21 +295,23 @@ async def get_active_high_volume_usdt_pairs(min_volume=65000000):
                     high_volume_pairs.append((symbol, quote_volume))
             except Exception:
                 continue
-    # Hacme göre sırala ve ilk 40'ı al
+    # Hacme göre sırala
     high_volume_pairs.sort(key=lambda x: x[1], reverse=True)
-    high_volume_pairs = high_volume_pairs[:40]
-    # 1d verisi 30'dan az olanları atla, uygun tüm coinleri döndür
+    # 1d verisi 30'dan az olanları atla, ilk top_n uygun coinleri döndür
     uygun_pairs = []
-    for symbol, volume in high_volume_pairs:
+    idx = 0
+    while len(uygun_pairs) < top_n and idx < len(high_volume_pairs):
+        symbol, volume = high_volume_pairs[idx]
         try:
             df_1d = await async_get_historical_data(symbol, '1d', 40)
             if len(df_1d) < 30:
                 print(f"{symbol}: 1d veri yetersiz ({len(df_1d)})")
+                idx += 1
                 continue  # yeni coin, atla
             uygun_pairs.append(symbol)
         except Exception as e:
             print(f"{symbol}: 1d veri çekilemedi: {e}")
-            continue
+        idx += 1
     return uygun_pairs
 
 async def main():
@@ -499,15 +498,16 @@ async def main():
                         return  # 4 saat dolmadıysa sinyal arama
                     else:
                         del stop_cooldown[symbol]  # 4 saat dolduysa tekrar sinyal aranabilir
-                # Başarılı veya stop olmuş coinler için 4 saat cooldown
-                if symbol in successful_signals:
-                    last_success = successful_signals[symbol]["completion_time"]
-                    if (datetime.now() - datetime.fromisoformat(last_success)) < timedelta(hours=4):
-                        return
-                if symbol in failed_signals:
-                    last_fail = failed_signals[symbol]["completion_time"]
-                    if (datetime.now() - datetime.fromisoformat(last_fail)) < timedelta(hours=4):
-                        return
+                # Başarılı sinyal sonrası 4 saatlik cooldown kontrolü
+                for sdict in [successful_signals, failed_signals]:
+                    if symbol in sdict:
+                        last_time = sdict[symbol].get("completion_time")
+                        if last_time:
+                            last_time_dt = datetime.fromisoformat(last_time)
+                            if (datetime.now() - last_time_dt) < timedelta(hours=4):
+                                return  # 4 saat dolmadıysa sinyal arama
+                            else:
+                                del sdict[symbol]  # 4 saat dolduysa tekrar sinyal aranabilir
                 # 1 günlük veri kontrolü
                 try:
                     df_1d = await async_get_historical_data(symbol, timeframes['1d'], 40)
@@ -546,7 +546,6 @@ async def main():
                         return  # Değişiklik yoksa devam et
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
-                    # Sinyal koşullarını kontrol et
                     # Sinyal koşulu: sadece 4 zaman dilimi de aynıysa
                     if all(s == 1 for s in signal_values):
                         sinyal_tipi = 'ALIS'
