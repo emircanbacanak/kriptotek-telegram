@@ -298,9 +298,9 @@ async def get_active_high_volume_usdt_pairs(min_volume=65000000):
                     high_volume_pairs.append((symbol, quote_volume))
             except Exception:
                 continue
-    # Hacme göre sırala ve ilk 20'yi al
+    # Hacme göre sırala ve ilk 40'ı al
     high_volume_pairs.sort(key=lambda x: x[1], reverse=True)
-    high_volume_pairs = high_volume_pairs[:20]
+    high_volume_pairs = high_volume_pairs[:40]
     # 1d verisi 30'dan az olanları atla, uygun tüm coinleri döndür
     uygun_pairs = []
     for symbol, volume in high_volume_pairs:
@@ -546,6 +546,7 @@ async def main():
                         return  # Değişiklik yoksa devam et
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
+                    # Sinyal koşullarını kontrol et
                     # Sinyal koşulu: sadece 4 zaman dilimi de aynıysa
                     if all(s == 1 for s in signal_values):
                         sinyal_tipi = 'ALIS'
