@@ -266,6 +266,21 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
 
     return df
 
+# EMA Crossover + RSI stratejisi
+
+def ema_rsi_signal(df, short_ema=9, long_ema=21, rsi_period=14):
+    df['ema_short'] = ta.trend.EMAIndicator(df['close'], window=short_ema).ema_indicator()
+    df['ema_long'] = ta.trend.EMAIndicator(df['close'], window=long_ema).ema_indicator()
+    df['rsi'] = ta.momentum.RSIIndicator(df['close'], window=rsi_period).rsi()
+    # AL: kısa EMA uzun EMA'yı yukarı keserse ve RSI > 50
+    # SAT: kısa EMA uzun EMA'yı aşağı keserse ve RSI < 50
+    if (df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] and df['ema_short'].iloc[-1] > df['ema_long'].iloc[-1] and df['rsi'].iloc[-1] > 50):
+        return 1  # AL
+    elif (df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] and df['ema_short'].iloc[-1] < df['ema_long'].iloc[-1] and df['rsi'].iloc[-1] < 50):
+        return -1  # SAT
+    else:
+        return 0
+
 # --- YENİ ANA DÖNGÜ VE MANTIK ---
 async def get_active_high_volume_usdt_pairs(min_volume=30000000, top_n=40):
     """
@@ -516,6 +531,51 @@ async def main():
                         return
                 except Exception as e:
                     print(f"UYARI: {symbol} için 1 günlük veri çekilemedi: {str(e)}")
+                    return
+                # --- Fiyat hareketi filtresi: Son 24 saatte %10'dan fazla artış/azalış varsa sinyal üretme ---
+                try:
+                    close_now = float(df_1d['close'].iloc[-1])
+                    close_24h_ago = float(df_1d['close'].iloc[-2])
+                    price_change_pct = ((close_now - close_24h_ago) / close_24h_ago) * 100
+                    if abs(price_change_pct) >= 10:
+                        print(f"{symbol}: Son 24 saatte %{price_change_pct:.2f} değişim, sinyal üretilmeyecek.")
+                        return
+                except Exception as e:
+                    print(f"{symbol}: Fiyat hareketi filtresi uygulanamadı: {e}")
+                    return
+                # --- EMA Crossover + RSI stratejisi (1h ve 4h) ---
+                try:
+                    df_1h = await async_get_historical_data(symbol, timeframes['1h'], 100)
+                    df_4h = await async_get_historical_data(symbol, timeframes['4h'], 100)
+                    ema_rsi_1h = ema_rsi_signal(df_1h)
+                    ema_rsi_4h = ema_rsi_signal(df_4h)
+                    if ema_rsi_1h == ema_rsi_4h and ema_rsi_1h != 0:
+                        # Sadece her iki zaman diliminde de aynı yönde sinyal varsa devam et
+                        # Mevcut sinyal algoritması ile birlikte kullanılacaksa, buraya ek koşul eklenebilir
+                        # Örneğin, hem ana algoritma hem EMA+RSI aynı yönde ise sinyal üret
+                        # Şimdilik sadece EMA+RSI'ya göre sinyal üretelim:
+                        current_signals = {tf: 0 for tf in tf_names}
+                        for tf_name in tf_names:
+                            try:
+                                df = await async_get_historical_data(symbol, timeframes[tf_name], 200)
+                                df = calculate_full_pine_signals(df, tf_name)
+                                current_signals[tf_name] = int(df['signal'].iloc[-1])
+                            except Exception as e:
+                                print(f"Hata: {symbol} - {tf_name} - {str(e)}")
+                                current_signals[tf_name] = 0
+                        # Sadece 4 zaman dilimi de aynıysa ve EMA+RSI ile aynı yöndeyse sinyal üret
+                        signal_values = [current_signals[tf] for tf in tf_names]
+                        if all(s == ema_rsi_1h for s in signal_values):
+                            sinyal_tipi = 'ALIS' if ema_rsi_1h == 1 else 'SATIS'
+                            # Sinyal gönderme ve pozisyon açma işlemleri burada devam edecek
+                            # ... (mevcut kodun ilgili kısmı buraya gelecek)
+                            # (Aşağıda mevcut kodun devamı var)
+                        else:
+                            return
+                    else:
+                        return
+                except Exception as e:
+                    print(f"{symbol}: EMA+RSI strateji hatası: {e}")
                     return
                 # Mevcut sinyalleri al
                 current_signals = dict()
